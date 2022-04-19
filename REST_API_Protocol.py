@@ -2,15 +2,11 @@ from flask import Flask
 from flask_restful import Resource, Api, reqparse
 import json
 import requests
-import time
+import mysql.connector
 
-response = '{ "SessionId":"0000650471314B9CBF4265A6D98CFFB459521B52E8A7553BA63C68CDCD76F4BB99", "Timeout":600}'
+response_token = '{ "SessionId":"0000650471314B9CBF4265A6D98CFFB459521B52E8A7553BA63C68CDCD76F4BB99", "Timeout":600}'
 
-machineIp = ["192.168.34.51", "192.168.34.52", "192.168.34.53", "192.168.34.54"]
-
-machines_Id = ["000161228811", "161228811000", "000000000000", "111111111111"]
-
-GET_json = '{ "ProgramId":11, "MachineNumber":1, "ProgramTime":8}' # json is user send a GET request
+GET_json = '{ "ProgramId": "" , "MachineNumber": "" , "ProgramTime": ""}' # json if user send a GET request
 
 GET_json = json.loads(GET_json)
 
@@ -34,31 +30,70 @@ class Start(Resource):
         machineNumber = args['MachineNumber']
         programTime = args['ProgramTime']
 
-        request_miele(programId,machineNumber,programTime)
+        status_code = request_miele(programId,machineNumber,programTime)
 
-        return {
-            'ProgamId': args['ProgramId'],
-            'MachineNumber': args['MachineNumber'],
-            'ProgramTime': args['ProgramTime']
-        }, 200
+        if (status_code == 204):
+            update_status(machineNumber)
+            return {
+                       'ProgamId': args['ProgramId'],
+                       'MachineNumber': args['MachineNumber'],
+                       'ProgramTime': args['ProgramTime']
+                   }, 200
+
+        else:
+            return {'Failed': status_code} # returns status code from Miele machine
+
+
+
 
 
 def request_miele(programId, machineNumber, programTime):
 
-    print("%d, %d, %d" % (programId, machineNumber, programTime))
+    print('programID: {} en machineNumber {}'.format(programId, machineNumber))
+    machine_ID, machine_IP = get_Ip_Id(machineNumber)
 
-    Bearer_token = GET_token(programId, machineNumber)
-    print(Bearer_token)
-    POST_program(programId, machineNumber, Bearer_token)
+    Bearer_token = GET_token(machine_ID, machine_IP)
+
+    status_code_miele = PUT_program(programId, machine_ID, machine_IP, Bearer_token)
+
+    return (status_code_miele)
 
 
 
-def GET_token(programId, machineNumber):
 
 
-    url = "https://" + machineIp[machineNumber - 1] + "/Devices/" + machines_Id[machineNumber - 1] + "/profSession"
+def get_Ip_Id(machineNumber):
+    mydb = mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password="",
+        database="machine_info"
+    )
+    mycursor = mydb.cursor()
+    sql = """SELECT MachineIP, MachineID FROM machine_info WHERE ID = %s"""
+
+    mycursor.execute(sql, (machineNumber,))
+
+    data = mycursor.fetchall()
+    data = list(data)
+    for i in range(len(data)):
+        data = str(data[i])
+        machine_IP, machine_ID = data.split(",")
+        cut_str_Machine_IP = machine_IP[2:15]
+        cut_str_Machine_ID = machine_ID[2:14]
+
+    return (cut_str_Machine_ID, cut_str_Machine_IP)
+
+
+
+
+
+
+def GET_token(machine_ID, machine_IP):
+
+
+    url = "https://" + machine_IP + "/Devices/" + machine_ID + "/profSession"
     print(url)
-
     payload = json.dumps({
         "loginName": "Admin",
         "Password": "Miele123"
@@ -67,15 +102,53 @@ def GET_token(programId, machineNumber):
         'Content-Type': 'application/json'
     }
 
-    #response = requests.request("POST", url, headers=headers,verify=False, data=payload)
+    #response_token = requests.request("POST", url, headers=headers, verify=False, data=payload)
 
-    parsed_data = json.loads(response)  # test_json will be replaced by the json of response
+    parsed_data = json.loads(response_token)
     token = parsed_data["SessionId"]
     return token
 
-def POST_program(programId, machineNumber,Bearer_token ):
 
-    return 0
+
+
+
+def PUT_program(programId, machine_ID, machine_IP, Bearer_token):
+
+    url = "https://"+machine_IP+"/Devices/" +machine_ID+ "/profProgram/Selection/Select"
+    print(url)
+    payload = json.dumps({
+        "ProgId": programId,
+        "SelectionType": 1
+    })
+
+    headers = {
+        'Authorization': Bearer_token,
+        'Content-Type': 'application/json'
+    }
+
+    #response_program = requests.request("PUT", url, headers=headers, verify=False, data=payload)
+    #return (response_program.status_code)
+    return (204)
+
+
+
+
+
+def update_status(machineNumber):
+    mydb = mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password="",
+        database="machine_info"
+    )
+    mycursor = mydb.cursor()
+    sql = "UPDATE machine_info SET Status = 'bezet' WHERE ID = ({})".format(machineNumber)
+    mycursor.execute(sql)
+    mydb.commit()
+    print(mycursor.rowcount, "record(s) affected")
+
+
+
 
 
 api.add_resource(Start, '/start')
