@@ -3,8 +3,7 @@ from flask_restful import Resource, Api, reqparse
 import json
 import requests
 import mysql.connector
-
-response_token = '{ "SessionId":"0000650471314B9CBF4265A6D98CFFB459521B52E8A7553BA63C68CDCD76F4BB99", "Timeout":600}'
+requests.packages.urllib3.disable_warnings()
 
 GET_json = '{ "ProgramId": "" , "MachineNumber": "" , "ProgramTime": ""}' # json if user send a GET request
 
@@ -32,7 +31,7 @@ class Start(Resource):
 
         status_code = request_miele(programId,machineNumber,programTime)
 
-        if (status_code == 204):
+        if (status_code[0] == 204 and status_code[1] == 200):
             update_status(machineNumber)
             return {
                        'ProgamId': args['ProgramId'],
@@ -50,16 +49,24 @@ class Start(Resource):
 def request_miele(programId, machineNumber, programTime):
 
     print('programID: {} en machineNumber {}'.format(programId, machineNumber))
-    machine_ID, machine_IP = get_Ip_Id(machineNumber)
 
-    Bearer_token = GET_token(machine_ID, machine_IP)
+    if programTime == 0:
+        print("wasmchine")
+        machine_ID, machine_IP = get_Ip_Id(machineNumber)
+        Bearer_token = GET_token(machine_ID, machine_IP)
+        status_code_program = PUT_program(programId, machine_ID, machine_IP, Bearer_token)
+        status_code_payment = PUT_payment_washing(machine_ID, machine_IP, Bearer_token)
 
-    status_code_miele = PUT_program(programId, machine_ID, machine_IP, Bearer_token)
+        return (status_code_program, status_code_payment)
 
-    return (status_code_miele)
+    elif programTime > 0:
+        print("droogkast")
+        machine_ID, machine_IP = get_Ip_Id(machineNumber)
+        Bearer_token = GET_token(machine_ID, machine_IP)
+        status_code_program = PUT_program(programId, machine_ID, machine_IP, Bearer_token)
+        status_code_payment = PUT_payment_dryer(machine_ID, machine_IP, Bearer_token, programTime)
 
-
-
+        return (status_code_program, status_code_payment)
 
 
 def get_Ip_Id(machineNumber):
@@ -102,10 +109,9 @@ def GET_token(machine_ID, machine_IP):
         'Content-Type': 'application/json'
     }
 
-    #response_token = requests.request("POST", url, headers=headers, verify=False, data=payload)
-
-    parsed_data = json.loads(response_token)
-    token = parsed_data["SessionId"]
+    response_token = requests.request("POST", url, headers=headers, verify=False, data=payload)
+    response_token = response_token.json()
+    token = response_token["SessionId"]
     return token
 
 
@@ -122,16 +128,51 @@ def PUT_program(programId, machine_ID, machine_IP, Bearer_token):
     })
 
     headers = {
-        'Authorization': Bearer_token,
+        'Authorization': 'Bearer {}'.format(Bearer_token),
         'Content-Type': 'application/json'
     }
 
-    #response_program = requests.request("PUT", url, headers=headers, verify=False, data=payload)
-    #return (response_program.status_code)
-    return (204)
+    response_program = requests.request("PUT", url, headers=headers, verify=False, data=payload)
+    return (response_program.status_code)
 
 
+def PUT_payment_washing(machine_ID,machine_IP, Bearer_token):
 
+    url = "https://"+machine_IP+"/Devices/" +machine_ID+ "/profPayment"
+    print(url)
+    payload = json.dumps({
+     "PaymentMode": 1,
+     "PaymentState": 1,
+     "PaidTime": 0
+    })
+
+    headers = {
+        'Authorization': 'Bearer {}'.format(Bearer_token),
+        'Content-Type': 'application/json'
+    }
+
+    response_program = requests.request("PUT", url, headers=headers, verify=False, data=payload)
+    return (response_program.status_code)
+
+
+def PUT_payment_dryer(machine_ID, machine_IP, Bearer_token, programTime):
+
+    url = "https://" + machine_IP + "/Devices/" + machine_ID + "/profPayment"
+    print(url)
+    payload = json.dumps({
+        "PaymentMode": 1,
+        "PaymentState": 1,
+        "TimeMode": 1,
+        "PaidTime": programTime
+    })
+
+    headers = {
+        'Authorization': 'Bearer {}'.format(Bearer_token),
+        'Content-Type': 'application/json'
+    }
+
+    response_program = requests.request("PUT", url, headers=headers, verify=False, data=payload)
+    return (response_program.status_code)
 
 
 def update_status(machineNumber):
@@ -142,13 +183,10 @@ def update_status(machineNumber):
         database="machine_info"
     )
     mycursor = mydb.cursor()
-    sql = "UPDATE machine_info SET Status = 'bezet' WHERE ID = ({})".format(machineNumber)
+    sql = "UPDATE machine_info SET Status = 'bussy' WHERE ID = ({})".format(machineNumber)
     mycursor.execute(sql)
     mydb.commit()
     print(mycursor.rowcount, "record(s) affected")
-
-
-
 
 
 api.add_resource(Start, '/start')
